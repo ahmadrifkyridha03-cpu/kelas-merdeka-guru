@@ -23,6 +23,7 @@ async function main() {
   await import("../m1_empirical_stress.ts");
   await import("../dapodik_kktp.test.ts");
   await import("../remedial_curriculum.test.ts");
+  await import("../athirah_format.test.ts");
   await import("./tier1_features.test.ts");
   await import("./tier2_boundaries.test.ts");
   await import("./tier3_integration.test.ts");
