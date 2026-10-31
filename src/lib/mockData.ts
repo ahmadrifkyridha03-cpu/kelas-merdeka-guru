@@ -1,4 +1,4 @@
-import { ClassSection, Student, TujuanPembelajaran } from "@/types";
+import type { ClassSection, Student, TujuanPembelajaran } from "../types/index.ts";
 
 export const mockClasses: ClassSection[] = [
   {

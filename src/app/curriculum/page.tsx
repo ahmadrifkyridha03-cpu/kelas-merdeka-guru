@@ -17,7 +17,8 @@ import {
   Printer
 } from "lucide-react";
 import { mockTPs } from "@/lib/mockData";
-import { generateTPFromCPAction, GeneratedTP } from "@/app/actions/geminiActions";
+import { generateTPFromCPAction } from "@/app/actions/geminiActions";
+import type { GeneratedTP } from "@/types";
 
 const wizardSteps = [
   { id: 1, name: "Minggu Efektif", icon: Calendar, description: "Hitung JP riil semester" },
