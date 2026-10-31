@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { 
   Calculator, 
   Download, 
@@ -11,11 +11,15 @@ import {
   Sparkles,
   ArrowUpDown
 } from "lucide-react";
-import { mockClasses, mockStudents, mockTPs } from "@/lib/mockData";
+import { ClassSection, Student, TujuanPembelajaran } from "@/types";
+import { getSavedClasses, getSavedStudents, getSavedTPs } from "@/lib/store";
 
 export default function GradesPage() {
-  const [selectedClassId, setSelectedClassId] = useState(mockClasses[0].id);
-  const activeClass = mockClasses.find(c => c.id === selectedClassId) || mockClasses[0];
+  const [classes, setClasses] = useState<ClassSection[]>([]);
+  const [selectedClassId, setSelectedClassId] = useState<string>("");
+  const [students, setStudents] = useState<Student[]>([]);
+  const [tps, setTps] = useState<TujuanPembelajaran[]>([]);
+  const [isClient, setIsClient] = useState(false);
 
   // State nilai siswa: studentId -> { [tpId]: score }
   const [scores, setScores] = useState<Record<string, Record<string, number>>>({
@@ -27,6 +31,22 @@ export default function GradesPage() {
   });
 
   const [notification, setNotification] = useState<string | null>(null);
+
+  useEffect(() => {
+    setIsClient(true);
+    const loadedClasses = getSavedClasses();
+    const loadedStudents = getSavedStudents();
+    const loadedTPs = getSavedTPs();
+    setClasses(loadedClasses);
+    setStudents(loadedStudents);
+    setTps(loadedTPs);
+    if (loadedClasses.length > 0) {
+      setSelectedClassId(loadedClasses[0].id);
+    }
+  }, []);
+
+  const activeClass = classes.find(c => c.id === selectedClassId) || classes[0];
+  const classStudents = students.filter(s => s.classId === selectedClassId);
 
   const handleScoreChange = (studentId: string, tpId: string, val: string) => {
     const num = Math.min(100, Math.max(0, Number(val) || 0));
@@ -89,7 +109,7 @@ export default function GradesPage() {
             onChange={(e) => setSelectedClassId(e.target.value)}
             className="text-xs font-semibold p-2 rounded-xl border border-slate-200 bg-slate-50"
           >
-            {mockClasses.map(c => (
+            {classes.map(c => (
               <option key={c.id} value={c.id}>{c.name} • {c.subjectName}</option>
             ))}
           </select>
@@ -117,7 +137,7 @@ export default function GradesPage() {
                 <th className="py-3 px-4 w-12 text-center" rowSpan={2}>No</th>
                 <th className="py-3 px-4 min-w-[200px]" rowSpan={2}>Nama Lengkap Siswa</th>
                 <th className="py-3 px-4 text-center w-24" rowSpan={2}>NISN</th>
-                {mockTPs.map(tp => (
+                {tps.map(tp => (
                   <th key={tp.id} className="py-2 px-3 text-center border-l border-slate-200 bg-slate-100/60" colSpan={1}>
                     <div className="text-blue-700 font-extrabold">{tp.code}</div>
                     <div className="text-[10px] font-medium text-slate-400 capitalize">{tp.scope}</div>
@@ -130,70 +150,78 @@ export default function GradesPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {mockStudents.map((student, idx) => {
-                const studentScores = scores[student.id] || {};
-                const scoreValues = mockTPs.map(tp => studentScores[tp.id] || 0);
-                const avgRaw = scoreValues.reduce((a, b) => a + b, 0) / (scoreValues.length || 1);
-                const finalAvg = Math.min(100, Math.round(avgRaw + student.bonusPoints));
-                const hasRemedial = mockTPs.some(tp => (studentScores[tp.id] || 0) < tp.kktpThreshold);
+              {classStudents.length === 0 ? (
+                <tr>
+                  <td colSpan={tps.length + 5} className="py-8 text-center text-slate-400">
+                    Belum ada siswa di rombel ini. Buka menu "Kelas & Siswa" untuk menambahkan data siswa.
+                  </td>
+                </tr>
+              ) : (
+                classStudents.map((student, idx) => {
+                  const studentScores = scores[student.id] || {};
+                  const scoreValues = tps.map(tp => studentScores[tp.id] || 0);
+                  const avgRaw = scoreValues.reduce((a, b) => a + b, 0) / (scoreValues.length || 1);
+                  const finalAvg = Math.min(100, Math.round(avgRaw + student.bonusPoints));
+                  const hasRemedial = tps.some(tp => (studentScores[tp.id] || 0) < tp.kktpThreshold);
 
-                return (
-                  <tr key={student.id} className="hover:bg-slate-50 transition">
-                    <td className="py-3 px-4 text-center text-slate-400 font-medium">{idx + 1}</td>
-                    <td className="py-3 px-4 font-bold text-slate-900">{student.fullName}</td>
-                    <td className="py-3 px-4 text-center font-mono text-[11px] text-slate-500">{student.nisn}</td>
-                    
-                    {/* Score Cells per TP */}
-                    {mockTPs.map(tp => {
-                      const val = studentScores[tp.id] ?? "";
-                      const numVal = Number(val);
-                      const isBelow = numVal > 0 && numVal < tp.kktpThreshold;
+                  return (
+                    <tr key={student.id} className="hover:bg-slate-50 transition">
+                      <td className="py-3 px-4 text-center text-slate-400 font-medium">{idx + 1}</td>
+                      <td className="py-3 px-4 font-bold text-slate-900">{student.fullName}</td>
+                      <td className="py-3 px-4 text-center font-mono text-[11px] text-slate-500">{student.nisn}</td>
+                      
+                      {/* Score Cells per TP */}
+                      {tps.map(tp => {
+                        const val = studentScores[tp.id] ?? "";
+                        const numVal = Number(val);
+                        const isBelow = numVal > 0 && numVal < tp.kktpThreshold;
 
-                      return (
-                        <td key={tp.id} className="py-2 px-3 text-center border-l border-slate-100">
-                          <input
-                            type="number"
-                            min="0"
-                            max="100"
-                            value={val}
-                            onChange={(e) => handleScoreChange(student.id, tp.id, e.target.value)}
-                            className={`w-16 text-center font-bold text-xs p-1.5 rounded-lg border transition focus:outline-none focus:ring-2 ${
-                              isBelow
-                                ? "bg-rose-50 text-rose-700 border-rose-300 focus:ring-rose-400"
-                                : "bg-white text-slate-900 border-slate-200 focus:ring-blue-400"
-                            }`}
-                          />
-                        </td>
-                      );
-                    })}
+                        return (
+                          <td key={tp.id} className="py-2 px-3 text-center border-l border-slate-100">
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              value={val}
+                              onChange={(e) => handleScoreChange(student.id, tp.id, e.target.value)}
+                              className={`w-16 text-center font-bold text-xs p-1.5 rounded-lg border transition focus:outline-none focus:ring-2 ${
+                                isBelow
+                                  ? "bg-rose-50 text-rose-700 border-rose-300 focus:ring-rose-400"
+                                  : "bg-white text-slate-900 border-slate-200 focus:ring-blue-400"
+                              }`}
+                            />
+                          </td>
+                        );
+                      })}
 
-                    {/* Bonus Points */}
-                    <td className="py-3 px-4 text-center border-l border-slate-100">
-                      <span className="font-bold text-purple-700 text-xs bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
-                        +{student.bonusPoints}
-                      </span>
-                    </td>
-
-                    {/* Average */}
-                    <td className="py-3 px-4 text-center border-l border-slate-100 font-mono font-bold text-slate-900">
-                      {finalAvg}
-                    </td>
-
-                    {/* Status */}
-                    <td className="py-3 px-4 text-center border-l border-slate-100">
-                      {hasRemedial ? (
-                        <span className="inline-flex items-center gap-1 rounded-md bg-rose-50 px-2 py-1 text-[10px] font-bold text-rose-700 border border-rose-200">
-                          <AlertTriangle className="h-3 w-3" /> Perlu Remedial
+                      {/* Bonus Points */}
+                      <td className="py-3 px-4 text-center border-l border-slate-100">
+                        <span className="font-bold text-purple-700 text-xs bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
+                          +{student.bonusPoints}
                         </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700 border border-emerald-200">
-                          <CheckCircle2 className="h-3 w-3" /> Tercapai Penuh
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
+                      </td>
+
+                      {/* Average */}
+                      <td className="py-3 px-4 text-center border-l border-slate-100 font-mono font-bold text-slate-900">
+                        {finalAvg}
+                      </td>
+
+                      {/* Status */}
+                      <td className="py-3 px-4 text-center border-l border-slate-100">
+                        {hasRemedial ? (
+                          <span className="inline-flex items-center gap-1 rounded-md bg-rose-50 px-2 py-1 text-[10px] font-bold text-rose-700 border border-rose-200">
+                            <AlertTriangle className="h-3 w-3" /> Perlu Remedial
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700 border border-emerald-200">
+                            <CheckCircle2 className="h-3 w-3" /> Tercapai Penuh
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>

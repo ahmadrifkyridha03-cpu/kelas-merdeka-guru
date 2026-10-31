@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { 
   CalendarCheck2, 
   CheckCircle2, 
@@ -8,27 +8,46 @@ import {
   Save, 
   Users, 
   Calendar,
-  AlertCircle
+  AlertCircle,
+  School
 } from "lucide-react";
-import { mockStudents, mockClasses } from "@/lib/mockData";
-import { AttendanceStatus } from "@/types";
+import { ClassSection, Student, AttendanceStatus } from "@/types";
+import { getSavedClasses, getSavedStudents } from "@/lib/store";
 
 export default function AttendancePage() {
+  const [classes, setClasses] = useState<ClassSection[]>([]);
+  const [selectedClassId, setSelectedClassId] = useState<string>("");
+  const [students, setStudents] = useState<Student[]>([]);
   const [meetingNumber, setMeetingNumber] = useState(1);
   const [date, setDate] = useState("2026-08-04");
   const [topic, setTopic] = useState("Pengenalan Strategi Algoritma & Bubble Sort");
-  const [journal, setJournal] = useState("Siswa sangat antusias saat simulasi menggunakan kartu angka. Bagas butuh pendampingan tambahan saat membaca instruksi tertulis.");
-  
-  // State presensi per siswa: studentId -> status
-  const [attendance, setAttendance] = useState<Record<string, AttendanceStatus>>({
-    "std-1": "HADIR",
-    "std-2": "HADIR",
-    "std-3": "HADIR",
-    "std-4": "HADIR",
-    "std-5": "HADIR",
-  });
-
+  const [journal, setJournal] = useState("Siswa sangat antusias saat simulasi menggunakan kartu angka.");
+  const [attendance, setAttendance] = useState<Record<string, AttendanceStatus>>({});
   const [savedNotification, setSavedNotification] = useState(false);
+  const [isClient, setIsClient] = useState(false);
+
+  useEffect(() => {
+    setIsClient(true);
+    const loadedClasses = getSavedClasses();
+    const loadedStudents = getSavedStudents();
+    setClasses(loadedClasses);
+    setStudents(loadedStudents);
+    if (loadedClasses.length > 0) {
+      setSelectedClassId(loadedClasses[0].id);
+    }
+  }, []);
+
+  const activeClass = classes.find(c => c.id === selectedClassId) || classes[0];
+  const classStudents = students.filter(s => s.classId === selectedClassId);
+
+  // Initialize attendance for class students
+  useEffect(() => {
+    const initial: Record<string, AttendanceStatus> = {};
+    classStudents.forEach(s => {
+      initial[s.id] = "HADIR";
+    });
+    setAttendance(initial);
+  }, [selectedClassId, students]);
 
   const handleStatusChange = (studentId: string, status: AttendanceStatus) => {
     setAttendance(prev => ({ ...prev, [studentId]: status }));
@@ -36,7 +55,7 @@ export default function AttendancePage() {
 
   const handleMarkAllPresent = () => {
     const updated: Record<string, AttendanceStatus> = {};
-    mockStudents.forEach(s => {
+    classStudents.forEach(s => {
       updated[s.id] = "HADIR";
     });
     setAttendance(updated);
@@ -46,6 +65,10 @@ export default function AttendancePage() {
     setSavedNotification(true);
     setTimeout(() => setSavedNotification(false), 3000);
   };
+
+  if (!isClient || !activeClass) {
+    return <div className="p-8 text-center text-slate-400">Memuat presensi...</div>;
+  }
 
   const statusOptions: { label: string; code: AttendanceStatus; color: string }[] = [
     { label: "Hadir", code: "HADIR", color: "bg-emerald-100 text-emerald-800 border-emerald-300" },
@@ -97,8 +120,21 @@ export default function AttendancePage() {
         </div>
       )}
 
-      {/* Meeting Parameters */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      {/* Meeting Parameters & Class Picker */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div>
+          <label className="block text-xs font-bold text-slate-700 mb-1">Pilih Rombel / Kelas</label>
+          <select 
+            value={selectedClassId}
+            onChange={(e) => setSelectedClassId(e.target.value)}
+            className="w-full text-xs font-bold text-blue-700 p-2.5 rounded-lg border border-slate-200 bg-blue-50/50"
+          >
+            {classes.map(c => (
+              <option key={c.id} value={c.id}>{c.name} • {c.subjectName}</option>
+            ))}
+          </select>
+        </div>
+
         <div>
           <label className="block text-xs font-bold text-slate-700 mb-1">Pertemuan Ke-</label>
           <select 
@@ -107,7 +143,7 @@ export default function AttendancePage() {
             className="w-full text-xs font-semibold p-2.5 rounded-lg border border-slate-200 bg-slate-50"
           >
             {[1, 2, 3, 4, 5, 6, 7, 8].map(n => (
-              <option key={n} value={n}>Pertemuan {n} (3 JP)</option>
+              <option key={n} value={n}>Pertemuan {n} ({activeClass.teachingHoursPerWeek || 3} JP)</option>
             ))}
           </select>
         </div>
@@ -145,38 +181,46 @@ export default function AttendancePage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {mockStudents.map((student, idx) => {
-              const currentStatus = attendance[student.id] || "HADIR";
+            {classStudents.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="py-8 text-center text-slate-400">
+                  Belum ada siswa di rombel ini. Buka menu "Kelas & Siswa" untuk menambahkan data siswa.
+                </td>
+              </tr>
+            ) : (
+              classStudents.map((student, idx) => {
+                const currentStatus = attendance[student.id] || "HADIR";
 
-              return (
-                <tr key={student.id} className="hover:bg-slate-50 transition">
-                  <td className="py-3 px-4 text-center font-medium text-slate-400">{idx + 1}</td>
-                  <td className="py-3 px-4 font-bold text-slate-900">{student.fullName}</td>
-                  <td className="py-3 px-4 text-center font-mono text-[11px] text-slate-500">{student.nisn}</td>
-                  <td className="py-3 px-4">
-                    <div className="flex items-center justify-center gap-1.5 flex-wrap">
-                      {statusOptions.map(opt => {
-                        const isSelected = currentStatus === opt.code;
-                        return (
-                          <button
-                            key={opt.code}
-                            type="button"
-                            onClick={() => handleStatusChange(student.id, opt.code)}
-                            className={`px-3 py-1 rounded-lg text-xs font-semibold border transition ${
-                              isSelected
-                                ? opt.color + " shadow-sm ring-1 ring-blue-500 font-bold"
-                                : "bg-white text-slate-500 border-slate-200 hover:bg-slate-100"
-                            }`}
-                          >
-                            {opt.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
+                return (
+                  <tr key={student.id} className="hover:bg-slate-50 transition">
+                    <td className="py-3 px-4 text-center font-medium text-slate-400">{idx + 1}</td>
+                    <td className="py-3 px-4 font-bold text-slate-900">{student.fullName}</td>
+                    <td className="py-3 px-4 text-center font-mono text-[11px] text-slate-500">{student.nisn}</td>
+                    <td className="py-3 px-4">
+                      <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                        {statusOptions.map(opt => {
+                          const isSelected = currentStatus === opt.code;
+                          return (
+                            <button
+                              key={opt.code}
+                              type="button"
+                              onClick={() => handleStatusChange(student.id, opt.code)}
+                              className={`px-3 py-1 rounded-lg text-xs font-semibold border transition ${
+                                isSelected
+                                  ? opt.color + " shadow-sm ring-1 ring-blue-500 font-bold"
+                                  : "bg-white text-slate-500 border-slate-200 hover:bg-slate-100"
+                              }`}
+                            >
+                              {opt.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
           </tbody>
         </table>
       </div>

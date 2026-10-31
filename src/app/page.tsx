@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { 
   Users, 
@@ -16,11 +16,35 @@ import {
   TrendingUp,
   AlertTriangle
 } from "lucide-react";
-import { mockClasses, mockStudents, mockTPs } from "@/lib/mockData";
+import { ClassSection, Student, TujuanPembelajaran } from "@/types";
+import { getSavedClasses, getSavedStudents, getSavedTPs } from "@/lib/store";
 
 export default function DashboardPage() {
-  const [selectedClassId, setSelectedClassId] = useState(mockClasses[0].id);
-  const activeClass = mockClasses.find(c => c.id === selectedClassId) || mockClasses[0];
+  const [classes, setClasses] = useState<ClassSection[]>([]);
+  const [students, setStudents] = useState<Student[]>([]);
+  const [tps, setTps] = useState<TujuanPembelajaran[]>([]);
+  const [selectedClassId, setSelectedClassId] = useState("");
+  const [isClient, setIsClient] = useState(false);
+
+  useEffect(() => {
+    setIsClient(true);
+    const loadedClasses = getSavedClasses();
+    const loadedStudents = getSavedStudents();
+    const loadedTPs = getSavedTPs();
+    setClasses(loadedClasses);
+    setStudents(loadedStudents);
+    setTps(loadedTPs);
+    if (loadedClasses.length > 0) {
+      setSelectedClassId(loadedClasses[0].id);
+    }
+  }, []);
+
+  const activeClass = classes.find(c => c.id === selectedClassId) || classes[0];
+  const classStudents = students.filter(s => s.classId === selectedClassId);
+
+  if (!isClient || !activeClass) {
+    return <div className="p-8 text-center text-slate-400">Memuat dashboard...</div>;
+  }
 
   return (
     <div className="space-y-8">
@@ -49,7 +73,7 @@ export default function DashboardPage() {
             onChange={(e) => setSelectedClassId(e.target.value)}
             className="w-full bg-white text-slate-900 font-semibold text-sm rounded-lg px-3 py-2 border-0 shadow-sm focus:ring-2 focus:ring-blue-400"
           >
-            {mockClasses.map(c => (
+            {classes.map(c => (
               <option key={c.id} value={c.id}>
                 {c.name} • {c.subjectName}
               </option>
@@ -67,7 +91,7 @@ export default function DashboardPage() {
               <Users className="h-5 w-5" />
             </div>
           </div>
-          <div className="mt-2 text-2xl font-bold text-slate-900">{activeClass.studentCount}</div>
+          <div className="mt-2 text-2xl font-bold text-slate-900">{classStudents.length}</div>
           <div className="mt-1 flex items-center gap-1 text-xs text-slate-500">
             <span>Rombel {activeClass.name}</span>
           </div>
@@ -80,7 +104,7 @@ export default function DashboardPage() {
               <CheckCircle2 className="h-5 w-5" />
             </div>
           </div>
-          <div className="mt-2 text-2xl font-bold text-slate-900">2 / {mockTPs.length}</div>
+          <div className="mt-2 text-2xl font-bold text-slate-900">2 / {tps.length || 3}</div>
           <div className="mt-1 flex items-center gap-1 text-xs text-emerald-600 font-medium">
             <TrendingUp className="h-3.5 w-3.5" />
             <span>67% target tercapai</span>

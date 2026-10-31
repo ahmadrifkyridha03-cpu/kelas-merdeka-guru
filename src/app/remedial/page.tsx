@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { 
   Sparkles, 
   Plus, 
@@ -11,24 +11,45 @@ import {
   FileCheck,
   Send,
   Zap,
-  TrendingUp
+  TrendingUp,
+  School
 } from "lucide-react";
-import { mockStudents, mockTPs } from "@/lib/mockData";
+import { ClassSection, Student } from "@/types";
+import { getSavedClasses, getSavedStudents, saveStudents } from "@/lib/store";
 import { generateRemedialTaskAction } from "@/app/actions/geminiActions";
 
 export default function RemedialPage() {
-  const [bonusList, setBonusList] = useState(mockStudents);
+  const [classes, setClasses] = useState<ClassSection[]>([]);
+  const [selectedClassId, setSelectedClassId] = useState<string>("");
+  const [students, setStudents] = useState<Student[]>([]);
   const [activeTab, setActiveTab] = useState<"remedial" | "pengayaan" | "bonus">("remedial");
   const [isGeneratingTask, setIsGeneratingTask] = useState(false);
   const [generatedTask, setGeneratedTask] = useState<string | null>(null);
+  const [isClient, setIsClient] = useState(false);
+
+  useEffect(() => {
+    setIsClient(true);
+    const loadedClasses = getSavedClasses();
+    const loadedStudents = getSavedStudents();
+    setClasses(loadedClasses);
+    setStudents(loadedStudents);
+    if (loadedClasses.length > 0) {
+      setSelectedClassId(loadedClasses[0].id);
+    }
+  }, []);
+
+  const activeClass = classes.find(c => c.id === selectedClassId) || classes[0];
+  const classStudents = students.filter(s => s.classId === selectedClassId);
 
   const handleAddBonus = (studentId: string, amount: number) => {
-    setBonusList(prev => prev.map(s => {
+    const updated = students.map(s => {
       if (s.id === studentId) {
         return { ...s, bonusPoints: s.bonusPoints + amount };
       }
       return s;
-    }));
+    });
+    setStudents(updated);
+    saveStudents(updated);
   };
 
   const handleGenerateAITask = async (tpCode: string, studentName: string = "Siswa") => {
@@ -78,38 +99,53 @@ export default function RemedialPage() {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
-        <button
-          onClick={() => setActiveTab("remedial")}
-          className={`px-4 py-2 text-xs font-bold rounded-xl transition ${
-            activeTab === "remedial"
-              ? "bg-rose-600 text-white shadow-sm shadow-rose-500/20"
-              : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
-          }`}
-        >
-          Antrean Remedial (Nilai &lt; KKTP)
-        </button>
-        <button
-          onClick={() => setActiveTab("pengayaan")}
-          className={`px-4 py-2 text-xs font-bold rounded-xl transition ${
-            activeTab === "pengayaan"
-              ? "bg-emerald-600 text-white shadow-sm shadow-emerald-500/20"
-              : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
-          }`}
-        >
-          Peserta Pengayaan (Tuntas Mahir)
-        </button>
-        <button
-          onClick={() => setActiveTab("bonus")}
-          className={`px-4 py-2 text-xs font-bold rounded-xl transition ${
-            activeTab === "bonus"
-              ? "bg-purple-600 text-white shadow-sm shadow-purple-500/20"
-              : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
-          }`}
-        >
-          Log Cepat Poin Keaktifan (+1 Poin)
-        </button>
+      {/* Tabs & Class Selector */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-3">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setActiveTab("remedial")}
+            className={`px-4 py-2 text-xs font-bold rounded-xl transition ${
+              activeTab === "remedial"
+                ? "bg-rose-600 text-white shadow-sm shadow-rose-500/20"
+                : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+            }`}
+          >
+            Antrean Remedial (Nilai &lt; KKTP)
+          </button>
+          <button
+            onClick={() => setActiveTab("pengayaan")}
+            className={`px-4 py-2 text-xs font-bold rounded-xl transition ${
+              activeTab === "pengayaan"
+                ? "bg-emerald-600 text-white shadow-sm shadow-emerald-500/20"
+                : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+            }`}
+          >
+            Peserta Pengayaan (Tuntas Mahir)
+          </button>
+          <button
+            onClick={() => setActiveTab("bonus")}
+            className={`px-4 py-2 text-xs font-bold rounded-xl transition ${
+              activeTab === "bonus"
+                ? "bg-purple-600 text-white shadow-sm shadow-purple-500/20"
+                : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+            }`}
+          >
+            Log Poin Keaktifan (+1 Poin)
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-slate-600">Rombel:</span>
+          <select
+            value={selectedClassId}
+            onChange={(e) => setSelectedClassId(e.target.value)}
+            className="text-xs font-bold text-blue-700 bg-white border border-slate-200 rounded-lg p-1.5"
+          >
+            {classes.map(c => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {/* Remedial Tab Content */}
@@ -231,34 +267,40 @@ export default function RemedialPage() {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-            {bonusList.map(student => (
-              <div key={student.id} className="rounded-xl border border-slate-200 p-4 bg-slate-50/50 flex items-center justify-between hover:border-purple-300 transition">
-                <div>
-                  <div className="font-bold text-xs text-slate-900">{student.fullName}</div>
-                  <div className="text-[11px] text-slate-500 font-mono">NISN: {student.nisn}</div>
-                  <div className="mt-1 text-xs font-extrabold text-purple-700">
-                    Total: +{student.bonusPoints} Poin
+            {classStudents.length === 0 ? (
+              <div className="col-span-3 py-8 text-center text-xs text-slate-400">
+                Belum ada siswa di rombel ini. Buka menu "Kelas & Siswa" untuk menambahkan data siswa.
+              </div>
+            ) : (
+              classStudents.map(student => (
+                <div key={student.id} className="rounded-xl border border-slate-200 p-4 bg-slate-50/50 flex items-center justify-between hover:border-purple-300 transition">
+                  <div>
+                    <div className="font-bold text-xs text-slate-900">{student.fullName}</div>
+                    <div className="text-[11px] text-slate-500 font-mono">NISN: {student.nisn}</div>
+                    <div className="mt-1 text-xs font-extrabold text-purple-700">
+                      Total: +{student.bonusPoints} Poin
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleAddBonus(student.id, 1)}
+                      className="h-8 px-2.5 rounded-lg bg-purple-600 text-white font-bold text-xs shadow-sm hover:bg-purple-700 active:scale-95 transition"
+                    >
+                      +1
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAddBonus(student.id, 2)}
+                      className="h-8 px-2.5 rounded-lg bg-indigo-600 text-white font-bold text-xs shadow-sm hover:bg-indigo-700 active:scale-95 transition"
+                    >
+                      +2
+                    </button>
                   </div>
                 </div>
-
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => handleAddBonus(student.id, 1)}
-                    className="h-8 px-2.5 rounded-lg bg-purple-600 text-white font-bold text-xs shadow-sm hover:bg-purple-700 active:scale-95 transition"
-                  >
-                    +1
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleAddBonus(student.id, 2)}
-                    className="h-8 px-2.5 rounded-lg bg-indigo-600 text-white font-bold text-xs shadow-sm hover:bg-indigo-700 active:scale-95 transition"
-                  >
-                    +2
-                  </button>
-                </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
       )}
