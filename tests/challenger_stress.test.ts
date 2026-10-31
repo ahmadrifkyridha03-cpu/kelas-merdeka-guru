@@ -496,7 +496,7 @@ describe("Milestone 1 Challenger Stress Test Suite", () => {
 
       // Component 3: Spiritualisasi (Quran, Hadits, Tokoh)
       expect(m.spiritualisasi.quranVerse.arabicText).toBeDefined();
-      expect(m.spiritualisasi.hadith.narrator).toBeDefined();
+      expect(m.spiritualisasi.hadith?.narrator).toBeDefined();
       expect(m.spiritualisasi.islamicHistory?.figureName).toBeDefined();
 
       // Component 4: Desain Pembelajaran (ABCD format & Diferensiasi)

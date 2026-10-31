@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { 
   Users, 
   Plus, 
@@ -14,22 +14,34 @@ import {
   Trash2,
   Edit,
   X,
-  BookOpen,
-  Layers,
-  Clock
+  FileSpreadsheet,
+  FileText,
+  AlertTriangle
 } from "lucide-react";
 import { ClassSection, Student, KurikulumFase } from "@/types";
+import { useAppStore } from "@/lib/store";
 import { 
-  getSavedClasses, 
-  saveClasses, 
-  getSavedStudents, 
-  saveStudents 
-} from "@/lib/store";
+  parseDapodikCSV, 
+  parseDapodikExcel, 
+  exportRosterToCSV, 
+  exportRosterToExcel, 
+  downloadFile 
+} from "@/lib/dapodik";
 
 export default function ClassesPage() {
-  const [classes, setClasses] = useState<ClassSection[]>([]);
-  const [selectedClassId, setSelectedClassId] = useState<string>("");
-  const [students, setStudents] = useState<Student[]>([]);
+  const {
+    classes,
+    selectedClassId,
+    setSelectedClassId,
+    students,
+    addClass,
+    updateClass,
+    deleteClass,
+    setStudents,
+    addStudent,
+    deleteStudent,
+  } = useAppStore();
+
   const [searchQuery, setSearchQuery] = useState("");
   const [isClient, setIsClient] = useState(false);
 
@@ -39,6 +51,19 @@ export default function ClassesPage() {
   const [isAddStudentModalOpen, setIsAddStudentModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
+
+  // Import state
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importStatus, setImportStatus] = useState<{
+    isLoading: boolean;
+    errors: string[];
+    warnings: string[];
+  }>({
+    isLoading: false,
+    errors: [],
+    warnings: [],
+  });
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Form State: Tambah / Edit Rombel
   const [classForm, setClassForm] = useState<{
@@ -53,7 +78,7 @@ export default function ClassesPage() {
     subjectName: "Informatika",
     gradeLevel: 10,
     fase: "E",
-    teachingHoursPerWeek: 3
+    teachingHoursPerWeek: 3,
   });
 
   // Form State: Tambah Siswa
@@ -68,26 +93,24 @@ export default function ClassesPage() {
     nisn: "",
     nis: "",
     gender: "L",
-    specialNeeds: ""
+    specialNeeds: "",
   });
 
-  // Inisialisasi data dari localStorage
+  // Hydration check
   useEffect(() => {
     setIsClient(true);
-    const loadedClasses = getSavedClasses();
-    const loadedStudents = getSavedStudents();
-    setClasses(loadedClasses);
-    setStudents(loadedStudents);
-    if (loadedClasses.length > 0) {
-      setSelectedClassId(loadedClasses[0].id);
+    if (!selectedClassId && classes.length > 0) {
+      setSelectedClassId(classes[0].id);
     }
-  }, []);
+  }, [classes, selectedClassId, setSelectedClassId]);
 
-  const activeClass = classes.find(c => c.id === selectedClassId) || classes[0];
+  const activeClass = classes.find((c) => c.id === selectedClassId) || classes[0];
 
-  const filteredStudents = students.filter(s => 
-    s.classId === selectedClassId && 
-    (s.fullName.toLowerCase().includes(searchQuery.toLowerCase()) || s.nisn.includes(searchQuery))
+  const filteredStudents = students.filter(
+    (s) =>
+      s.classId === selectedClassId &&
+      (s.fullName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        s.nisn.includes(searchQuery))
   );
 
   const showNotify = (msg: string) => {
@@ -105,14 +128,14 @@ export default function ClassesPage() {
     else if (level === 10) autoFase = "E";
     else autoFase = "F";
 
-    setClassForm(prev => ({
+    setClassForm((prev) => ({
       ...prev,
       gradeLevel: level,
-      fase: autoFase
+      fase: autoFase,
     }));
   };
 
-  // Simpan Rombel Baru
+  // Simpan Rombel Baru / Edit
   const handleSaveClass = (e: React.FormEvent) => {
     e.preventDefault();
     if (!classForm.name.trim() || !classForm.subjectName.trim()) {
@@ -122,22 +145,18 @@ export default function ClassesPage() {
 
     if (isEditClassModalOpen && classForm.id) {
       // Edit Rombel
-      const updated = classes.map(c => {
-        if (c.id === classForm.id) {
-          return {
-            ...c,
-            name: classForm.name,
-            subjectName: classForm.subjectName,
-            gradeLevel: classForm.gradeLevel,
-            fase: classForm.fase,
-            teachingHoursPerWeek: classForm.teachingHoursPerWeek,
-            updatedAt: new Date().toISOString()
-          };
-        }
-        return c;
-      });
-      setClasses(updated);
-      saveClasses(updated);
+      const target = classes.find((c) => c.id === classForm.id);
+      if (target) {
+        updateClass({
+          ...target,
+          name: classForm.name,
+          subjectName: classForm.subjectName,
+          gradeLevel: classForm.gradeLevel,
+          fase: classForm.fase,
+          teachingHoursPerWeek: classForm.teachingHoursPerWeek,
+          updatedAt: new Date().toISOString(),
+        });
+      }
       setIsEditClassModalOpen(false);
       showNotify(`Rombel ${classForm.name} berhasil diperbarui!`);
     } else {
@@ -154,15 +173,15 @@ export default function ClassesPage() {
         semesterNumber: 1,
         studentCount: 0,
         createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       };
 
-      const updated = [...classes, newClass];
-      setClasses(updated);
-      saveClasses(updated);
+      addClass(newClass);
       setSelectedClassId(newClass.id);
       setIsAddClassModalOpen(false);
-      showNotify(`Rombel baru "${newClass.name}" (Fase ${newClass.fase}) berhasil ditambahkan!`);
+      showNotify(
+        `Rombel baru "${newClass.name}" (Fase ${newClass.fase}) berhasil ditambahkan!`
+      );
     }
   };
 
@@ -175,39 +194,52 @@ export default function ClassesPage() {
       subjectName: activeClass.subjectName,
       gradeLevel: activeClass.gradeLevel,
       fase: activeClass.fase,
-      teachingHoursPerWeek: activeClass.teachingHoursPerWeek
+      teachingHoursPerWeek: activeClass.teachingHoursPerWeek,
     });
     setIsEditClassModalOpen(true);
   };
 
   // Hapus Rombel
   const handleDeleteClass = (classId: string, className: string) => {
-    if (confirm(`Apakah Anda yakin ingin menghapus Rombel "${className}" beserta seluruh data siswanya?`)) {
-      const updatedClasses = classes.filter(c => c.id !== classId);
-      const updatedStudents = students.filter(s => s.classId !== classId);
-      setClasses(updatedClasses);
-      setStudents(updatedStudents);
-      saveClasses(updatedClasses);
-      saveStudents(updatedStudents);
-      if (updatedClasses.length > 0) {
-        setSelectedClassId(updatedClasses[0].id);
+    if (
+      confirm(
+        `Apakah Anda yakin ingin menghapus Rombel "${className}" beserta seluruh data siswanya?`
+      )
+    ) {
+      deleteClass(classId);
+      const remaining = classes.filter((c) => c.id !== classId);
+      if (remaining.length > 0) {
+        setSelectedClassId(remaining[0].id);
       }
       showNotify(`Rombel "${className}" telah dihapus.`);
     }
   };
 
-  // Simpan Siswa Baru Manual
+  // Simpan Siswa Baru Manual (dengan Fleksibel NISN)
   const handleSaveStudent = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!studentForm.fullName.trim() || !studentForm.nisn.trim()) {
-      alert("Nama Lengkap dan NISN siswa wajib diisi!");
+    if (!studentForm.fullName.trim()) {
+      alert("Nama Lengkap siswa wajib diisi!");
       return;
+    }
+
+    let finalNisn = studentForm.nisn.trim();
+    // Validasi format jika NISN diisi
+    if (finalNisn) {
+      if (!/^\d{10}$/.test(finalNisn)) {
+        if (!confirm("NISN biasanya terdiri dari 10 digit angka. Apakah Anda ingin tetap melanjutkan?")) {
+          return;
+        }
+      }
+    } else {
+      // Jika kosong (misal siswa baru jenjang SD kelas 1 atau SMP kelas 7 yang belum terbit NISN)
+      finalNisn = `PENDING-${Date.now().toString().slice(-6)}`;
     }
 
     const newStudent: Student = {
       id: `std-${Date.now()}`,
       classId: selectedClassId,
-      nisn: studentForm.nisn.trim(),
+      nisn: finalNisn,
       nis: studentForm.nis.trim() || undefined,
       fullName: studentForm.fullName.trim(),
       gender: studentForm.gender,
@@ -215,22 +247,18 @@ export default function ClassesPage() {
       status: "AKTIF",
       bonusPoints: 0,
       createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
     };
 
-    const updatedStudents = [...students, newStudent];
-    setStudents(updatedStudents);
-    saveStudents(updatedStudents);
+    addStudent(newStudent);
 
     // Update jumlah siswa di kelas
-    const updatedClasses = classes.map(c => {
-      if (c.id === selectedClassId) {
-        return { ...c, studentCount: c.studentCount + 1 };
-      }
-      return c;
-    });
-    setClasses(updatedClasses);
-    saveClasses(updatedClasses);
+    if (activeClass) {
+      updateClass({
+        ...activeClass,
+        studentCount: activeClass.studentCount + 1,
+      });
+    }
 
     // Reset Form
     setStudentForm({
@@ -238,75 +266,170 @@ export default function ClassesPage() {
       nisn: "",
       nis: "",
       gender: "L",
-      specialNeeds: ""
+      specialNeeds: "",
     });
     setIsAddStudentModalOpen(false);
-    showNotify(`Siswa "${newStudent.fullName}" berhasil ditambahkan ke ${activeClass?.name}!`);
+    showNotify(
+      `Siswa "${newStudent.fullName}" berhasil ditambahkan ke ${activeClass?.name}!`
+    );
   };
 
   // Hapus Siswa
   const handleDeleteStudent = (studentId: string, studentName: string) => {
     if (confirm(`Hapus siswa "${studentName}" dari rombel ini?`)) {
-      const updatedStudents = students.filter(s => s.id !== studentId);
-      setStudents(updatedStudents);
-      saveStudents(updatedStudents);
-
-      const updatedClasses = classes.map(c => {
-        if (c.id === selectedClassId) {
-          return { ...c, studentCount: Math.max(0, c.studentCount - 1) };
-        }
-        return c;
-      });
-      setClasses(updatedClasses);
-      saveClasses(updatedClasses);
+      deleteStudent(studentId);
+      if (activeClass) {
+        updateClass({
+          ...activeClass,
+          studentCount: Math.max(0, activeClass.studentCount - 1),
+        });
+      }
       showNotify(`Siswa "${studentName}" berhasil dihapus.`);
     }
   };
 
-  // Simulasi Impor Dapodik
-  const handleSimulateDapodikImport = () => {
-    const imported: Student[] = [
-      {
-        id: `std-${Date.now()}-1`,
-        classId: selectedClassId,
-        nisn: "0089912341",
-        nis: "2425006",
-        fullName: "Fajar Maulana Sidik",
-        gender: "L",
-        status: "AKTIF",
-        bonusPoints: 0,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      },
-      {
-        id: `std-${Date.now()}-2`,
-        classId: selectedClassId,
-        nisn: "0089912342",
-        nis: "2425007",
-        fullName: "Gita Permatasari",
-        gender: "P",
-        status: "AKTIF",
-        bonusPoints: 0,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      }
-    ];
+  // Real Dapodik File Upload Handler
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setImportFile(file);
+      setImportStatus({ isLoading: false, errors: [], warnings: [] });
+    }
+  };
 
-    const updated = [...students, ...imported];
-    setStudents(updated);
-    saveStudents(updated);
+  const handleProcessImport = () => {
+    if (!importFile) {
+      alert("Silakan pilih berkas CSV atau Excel terlebih dahulu!");
+      return;
+    }
 
-    const updatedClasses = classes.map(c => {
-      if (c.id === selectedClassId) {
-        return { ...c, studentCount: c.studentCount + imported.length };
+    setImportStatus({ isLoading: true, errors: [], warnings: [] });
+    const fileName = importFile.name.toLowerCase();
+    const isExcel = fileName.endsWith(".xlsx") || fileName.endsWith(".xls");
+
+    const reader = new FileReader();
+
+    if (isExcel) {
+      reader.onload = (e) => {
+        try {
+          const buffer = e.target?.result as ArrayBuffer;
+          const result = parseDapodikExcel(buffer, selectedClassId);
+          handleImportResult(result);
+        } catch (err: any) {
+          setImportStatus({
+            isLoading: false,
+            errors: [`Gagal memproses file Excel: ${err?.message || "Kesalahan tidak dikenal"}`],
+            warnings: [],
+          });
+        }
+      };
+      reader.onerror = () => {
+        setImportStatus({
+          isLoading: false,
+          errors: ["Gagal membaca berkas Excel dari perangkat."],
+          warnings: [],
+        });
+      };
+      reader.readAsArrayBuffer(importFile);
+    } else {
+      reader.onload = (e) => {
+        try {
+          const text = e.target?.result as string;
+          const result = parseDapodikCSV(text, selectedClassId);
+          handleImportResult(result);
+        } catch (err: any) {
+          setImportStatus({
+            isLoading: false,
+            errors: [`Gagal memproses file CSV: ${err?.message || "Kesalahan tidak dikenal"}`],
+            warnings: [],
+          });
+        }
+      };
+      reader.onerror = () => {
+        setImportStatus({
+          isLoading: false,
+          errors: ["Gagal membaca berkas CSV dari perangkat."],
+          warnings: [],
+        });
+      };
+      reader.readAsText(importFile, "UTF-8");
+    }
+  };
+
+  const handleImportResult = (result: ReturnType<typeof parseDapodikCSV>) => {
+    if (!result.success || result.students.length === 0) {
+      setImportStatus({
+        isLoading: false,
+        errors: result.errors.length > 0 ? result.errors : ["Tidak ada data siswa valid yang dapat diimpor."],
+        warnings: result.warnings,
+      });
+      return;
+    }
+
+    // Append parsed students to store
+    const existing = students.filter((s) => s.classId === selectedClassId);
+    const existingNisns = new Set(existing.map((s) => s.nisn));
+
+    // Avoid duplicate NISNs within same class if already present
+    const newStudentsToAdd: Student[] = [];
+    let skippedDuplicates = 0;
+
+    for (const s of result.students) {
+      if (s.nisn && !s.isPendingNisn && existingNisns.has(s.nisn)) {
+        skippedDuplicates++;
+      } else {
+        newStudentsToAdd.push(s);
       }
-      return c;
-    });
-    setClasses(updatedClasses);
-    saveClasses(updatedClasses);
+    }
+
+    if (newStudentsToAdd.length > 0) {
+      setStudents([...students, ...newStudentsToAdd]);
+      if (activeClass) {
+        updateClass({
+          ...activeClass,
+          studentCount: activeClass.studentCount + newStudentsToAdd.length,
+        });
+      }
+    }
 
     setIsImportModalOpen(false);
-    showNotify("Berhasil mengimpor 2 siswa dari berkas CSV Dapodik Kemendikbudristek!");
+    setImportFile(null);
+    setImportStatus({ isLoading: false, errors: [], warnings: [] });
+
+    let msg = `Berhasil mengimpor ${newStudentsToAdd.length} siswa ke ${activeClass?.name}!`;
+    if (skippedDuplicates > 0) {
+      msg += ` (${skippedDuplicates} siswa dilewati karena NISN sudah ada)`;
+    }
+    showNotify(msg);
+  };
+
+  // Export Roster Handlers
+  const handleExportCSV = () => {
+    if (!activeClass || filteredStudents.length === 0) {
+      alert("Tidak ada siswa untuk diekspor!");
+      return;
+    }
+    const csvData = exportRosterToCSV(filteredStudents, activeClass.name);
+    downloadFile(
+      csvData,
+      `Roster_${activeClass.name.replace(/\s+/g, "_")}.csv`,
+      "text/csv;charset=utf-8;"
+    );
+    showNotify(`Roster ${activeClass.name} berhasil diekspor ke CSV!`);
+  };
+
+  const handleExportExcel = () => {
+    if (!activeClass || filteredStudents.length === 0) {
+      alert("Tidak ada siswa untuk diekspor!");
+      return;
+    }
+    const excelBuffer = exportRosterToExcel(filteredStudents, activeClass.name);
+    downloadFile(
+      excelBuffer,
+      `Roster_${activeClass.name.replace(/\s+/g, "_")}.xlsx`,
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    showNotify(`Roster ${activeClass.name} berhasil diekspor ke Excel!`);
   };
 
   if (!isClient || !activeClass) {
@@ -329,10 +452,35 @@ export default function ClassesPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
+          {/* Export Dropdown / Buttons */}
+          <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl p-1 shadow-sm">
+            <button
+              type="button"
+              onClick={handleExportCSV}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 rounded-lg transition"
+              title="Ekspor CSV"
+            >
+              <FileText className="h-3.5 w-3.5 text-blue-600" /> CSV
+            </button>
+            <div className="w-[1px] h-4 bg-slate-200" />
+            <button
+              type="button"
+              onClick={handleExportExcel}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 rounded-lg transition"
+              title="Ekspor Excel (.xlsx)"
+            >
+              <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" /> Excel
+            </button>
+          </div>
+
           <button
             type="button"
-            onClick={() => setIsImportModalOpen(true)}
+            onClick={() => {
+              setImportFile(null);
+              setImportStatus({ isLoading: false, errors: [], warnings: [] });
+              setIsImportModalOpen(true);
+            }}
             className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition"
           >
             <FileUp className="h-4 w-4 text-blue-600" />
@@ -358,7 +506,7 @@ export default function ClassesPage() {
 
       {/* Class Selector Tabs with Add Class button */}
       <div className="flex items-center gap-2 overflow-x-auto pb-2 border-b border-slate-200">
-        {classes.map(c => (
+        {classes.map((c) => (
           <button
             key={c.id}
             onClick={() => setSelectedClassId(c.id)}
@@ -369,9 +517,13 @@ export default function ClassesPage() {
             }`}
           >
             <span>{c.name}</span>
-            <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
-              selectedClassId === c.id ? "bg-white/20 text-white" : "bg-slate-100 text-slate-500"
-            }`}>
+            <span
+              className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                selectedClassId === c.id
+                  ? "bg-white/20 text-white"
+                  : "bg-slate-100 text-slate-500"
+              }`}
+            >
               {c.studentCount} Siswa
             </span>
           </button>
@@ -384,7 +536,7 @@ export default function ClassesPage() {
               subjectName: "Informatika",
               gradeLevel: 10,
               fase: "E",
-              teachingHoursPerWeek: 3
+              teachingHoursPerWeek: 3,
             });
             setIsAddClassModalOpen(true);
           }}
@@ -480,12 +632,19 @@ export default function ClassesPage() {
                     <td className="py-3 px-4 text-center font-medium text-slate-400">{idx + 1}</td>
                     <td className="py-3 px-4 font-bold text-slate-900">{student.fullName}</td>
                     <td className="py-3 px-4 font-mono text-[11px] text-slate-600">
-                      {student.nisn} {student.nis ? `• NIS: ${student.nis}` : ""}
+                      <span className={student.nisn.startsWith("PENDING") ? "text-amber-600 italic font-sans text-[10px]" : ""}>
+                        {student.nisn}
+                      </span>
+                      {student.nis ? ` • NIS: ${student.nis}` : ""}
                     </td>
                     <td className="py-3 px-4 text-center">
-                      <span className={`px-2 py-0.5 rounded font-semibold text-[10px] ${
-                        student.gender === "L" ? "bg-blue-50 text-blue-700" : "bg-pink-50 text-pink-700"
-                      }`}>
+                      <span
+                        className={`px-2 py-0.5 rounded font-semibold text-[10px] ${
+                          student.gender === "L"
+                            ? "bg-blue-50 text-blue-700"
+                            : "bg-pink-50 text-pink-700"
+                        }`}
+                      >
                         {student.gender === "L" ? "Laki-laki" : "Perempuan"}
                       </span>
                     </td>
@@ -590,7 +749,7 @@ export default function ClassesPage() {
                     onChange={(e) => handleGradeLevelChange(Number(e.target.value))}
                     className="w-full text-xs p-2.5 rounded-xl border border-slate-200 bg-white"
                   >
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(lvl => (
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((lvl) => (
                       <option key={lvl} value={lvl}>Kelas {lvl}</option>
                     ))}
                   </select>
@@ -602,15 +761,14 @@ export default function ClassesPage() {
                   </label>
                   <select
                     value={classForm.fase}
-                    onChange={(e) => setClassForm({ ...classForm, fase: e.target.value as KurikulumFase })}
-                    className="w-full text-xs p-2.5 rounded-xl border border-slate-200 bg-white font-bold text-blue-700"
+                    onChange={(e) =>
+                      setClassForm({ ...classForm, fase: e.target.value as KurikulumFase })
+                    }
+                    className="w-full text-xs p-2.5 rounded-xl border border-slate-200 bg-white font-semibold text-blue-700"
                   >
-                    <option value="A">Fase A (SD 1-2)</option>
-                    <option value="B">Fase B (SD 3-4)</option>
-                    <option value="C">Fase C (SD 5-6)</option>
-                    <option value="D">Fase D (SMP 7-9)</option>
-                    <option value="E">Fase E (SMA 10)</option>
-                    <option value="F">Fase F (SMA 11-12)</option>
+                    {["A", "B", "C", "D", "E", "F"].map((f) => (
+                      <option key={f} value={f}>Fase {f}</option>
+                    ))}
                   </select>
                 </div>
 
@@ -622,18 +780,17 @@ export default function ClassesPage() {
                     type="number"
                     min="1"
                     max="10"
+                    required
                     value={classForm.teachingHoursPerWeek}
-                    onChange={(e) => setClassForm({ ...classForm, teachingHoursPerWeek: Number(e.target.value) })}
+                    onChange={(e) =>
+                      setClassForm({
+                        ...classForm,
+                        teachingHoursPerWeek: Number(e.target.value),
+                      })
+                    }
                     className="w-full text-xs p-2.5 rounded-xl border border-slate-200"
                   />
                 </div>
-              </div>
-
-              <div className="rounded-xl bg-blue-50/60 p-3 text-[11px] text-blue-800 border border-blue-200/60 flex items-start gap-2">
-                <AlertCircle className="h-4 w-4 text-blue-600 flex-shrink-0 mt-0.5" />
-                <span>
-                  Fase yang dipilih (misal <strong>Fase {classForm.fase}</strong>) akan otomatis dipakai oleh modul pembuat CP, TP, ATP, dan Modul Ajar AI.
-                </span>
               </div>
 
               <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100">
@@ -651,7 +808,7 @@ export default function ClassesPage() {
                   type="submit"
                   className="rounded-xl bg-blue-600 px-5 py-2 text-xs font-bold text-white shadow-sm hover:bg-blue-700 transition"
                 >
-                  {isEditClassModalOpen ? "Simpan Perubahan" : "Tambahkan Rombel"}
+                  {isEditClassModalOpen ? "Simpan Perubahan" : "Buat Rombel"}
                 </button>
               </div>
             </form>
@@ -664,15 +821,10 @@ export default function ClassesPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-slate-100 animate-scaleUp">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
-              <div>
-                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                  <Users className="h-4 w-4 text-blue-600" />
-                  Tambah Siswa ke {activeClass.name}
-                </h3>
-                <p className="text-[11px] text-slate-500">
-                  Data siswa akan langsung tersimpan di daftar roster dan buku nilai.
-                </p>
-              </div>
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Users className="h-4 w-4 text-blue-600" />
+                Tambah Siswa ke {activeClass.name}
+              </h3>
               <button
                 type="button"
                 onClick={() => setIsAddStudentModalOpen(false)}
@@ -690,7 +842,7 @@ export default function ClassesPage() {
                 <input
                   type="text"
                   required
-                  placeholder="Contoh: Muhammad Rizky Pratama"
+                  placeholder="Contoh: Muhammad Fatih Al-Farabi"
                   value={studentForm.fullName}
                   onChange={(e) => setStudentForm({ ...studentForm, fullName: e.target.value })}
                   className="w-full text-xs p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
@@ -700,16 +852,17 @@ export default function ClassesPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    NISN (10 Digit) *
+                    NISN (10 Digit, opsional)
                   </label>
                   <input
                     type="text"
-                    required
-                    placeholder="Contoh: 0081234567"
+                    maxLength={10}
+                    placeholder="Kosongkan bila belum ada"
                     value={studentForm.nisn}
                     onChange={(e) => setStudentForm({ ...studentForm, nisn: e.target.value })}
                     className="w-full text-xs p-2.5 rounded-xl border border-slate-200 font-mono"
                   />
+                  <p className="text-[10px] text-slate-400 mt-0.5">Otomatis generate jika kosong</p>
                 </div>
 
                 <div>
@@ -731,11 +884,13 @@ export default function ClassesPage() {
                   Jenis Kelamin *
                 </label>
                 <div className="grid grid-cols-2 gap-3">
-                  <label className={`flex items-center justify-center gap-2 p-2.5 rounded-xl border text-xs font-bold cursor-pointer transition ${
-                    studentForm.gender === "L"
-                      ? "bg-blue-50 border-blue-400 text-blue-700"
-                      : "border-slate-200 text-slate-600 hover:bg-slate-50"
-                  }`}>
+                  <label
+                    className={`flex items-center justify-center gap-2 p-2.5 rounded-xl border text-xs font-bold cursor-pointer transition ${
+                      studentForm.gender === "L"
+                        ? "bg-blue-50 border-blue-400 text-blue-700"
+                        : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
                     <input
                       type="radio"
                       name="gender"
@@ -747,11 +902,13 @@ export default function ClassesPage() {
                     Laki-laki (L)
                   </label>
 
-                  <label className={`flex items-center justify-center gap-2 p-2.5 rounded-xl border text-xs font-bold cursor-pointer transition ${
-                    studentForm.gender === "P"
-                      ? "bg-pink-50 border-pink-400 text-pink-700"
-                      : "border-slate-200 text-slate-600 hover:bg-slate-50"
-                  }`}>
+                  <label
+                    className={`flex items-center justify-center gap-2 p-2.5 rounded-xl border text-xs font-bold cursor-pointer transition ${
+                      studentForm.gender === "P"
+                        ? "bg-pink-50 border-pink-400 text-pink-700"
+                        : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
                     <input
                       type="radio"
                       name="gender"
@@ -798,44 +955,137 @@ export default function ClassesPage() {
         </div>
       )}
 
-      {/* ================= MODAL: IMPOR DAPODIK ================= */}
+      {/* ================= MODAL: REAL IMPOR DAPODIK ================= */}
       {isImportModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-slate-100">
-            <h3 className="text-base font-bold text-slate-900 mb-1">
-              Impor Data Roster dari Dapodik
-            </h3>
-            <p className="text-xs text-slate-500 mb-4">
-              Unggah file CSV atau Excel yang diekspor dari aplikasi Dapodik sekolah. Sistem otomatis memetakan NISN, Nama, dan Gender ke rombel {activeClass.name}.
-            </p>
-
-            <div 
-              onClick={handleSimulateDapodikImport}
-              className="rounded-xl border-2 border-dashed border-slate-300 p-6 text-center hover:border-blue-500 hover:bg-blue-50/20 transition cursor-pointer mb-5"
-            >
-              <FileUp className="mx-auto h-8 w-8 text-blue-600 mb-2" />
-              <div className="text-xs font-semibold text-slate-800">
-                Klik untuk Simulasikan Impor Berkas Dapodik
-              </div>
-              <div className="text-[11px] text-slate-400 mt-1">
-                Format: .csv atau .xlsx (Maks. 5 MB)
-              </div>
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-3">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <FileUp className="h-5 w-5 text-blue-600" />
+                Impor Data Roster Dapodik
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsImportModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="h-5 w-5" />
+              </button>
             </div>
 
-            <div className="flex items-center justify-end gap-2.5">
+            <p className="text-xs text-slate-500 mb-4">
+              Unggah file CSV atau Excel yang diekspor langsung dari aplikasi Dapodik Kemendikbudristek untuk rombel <strong>{activeClass.name}</strong>.
+            </p>
+
+            {/* Hidden File Input */}
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept=".csv, .xlsx, .xls"
+              onChange={handleFileChange}
+              className="hidden"
+            />
+
+            {/* Upload Drag/Click Box */}
+            <div
+              onClick={() => fileInputRef.current?.click()}
+              className={`rounded-xl border-2 border-dashed p-6 text-center transition cursor-pointer mb-4 ${
+                importFile
+                  ? "border-emerald-400 bg-emerald-50/30"
+                  : "border-slate-300 hover:border-blue-500 hover:bg-blue-50/20"
+              }`}
+            >
+              {importFile ? (
+                <div>
+                  <CheckCircle2 className="mx-auto h-8 w-8 text-emerald-600 mb-2" />
+                  <div className="text-xs font-bold text-slate-900 break-all">
+                    {importFile.name}
+                  </div>
+                  <div className="text-[11px] text-emerald-700 mt-1">
+                    {(importFile.size / 1024).toFixed(1)} KB • Siap diproses
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setImportFile(null);
+                      if (fileInputRef.current) fileInputRef.current.value = "";
+                    }}
+                    className="text-[11px] text-rose-600 underline mt-2"
+                  >
+                    Ganti file
+                  </button>
+                </div>
+              ) : (
+                <div>
+                  <FileUp className="mx-auto h-8 w-8 text-blue-600 mb-2" />
+                  <div className="text-xs font-semibold text-slate-800">
+                    Klik untuk Memilih File CSV atau Excel
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-1">
+                    Mendukung delimit koma (,), titik-koma (;), dan .xlsx
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Error or Warnings Feedback */}
+            {importStatus.errors.length > 0 && (
+              <div className="mb-4 rounded-xl bg-rose-50 border border-rose-200 p-3 text-xs text-rose-800">
+                <div className="font-bold flex items-center gap-1.5 mb-1">
+                  <AlertCircle className="h-4 w-4 text-rose-600 flex-shrink-0" />
+                  Gagal Mengimpor File
+                </div>
+                <ul className="list-disc list-inside space-y-0.5 text-[11px]">
+                  {importStatus.errors.map((err, i) => (
+                    <li key={i}>{err}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {importStatus.warnings.length > 0 && (
+              <div className="mb-4 rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800 max-h-32 overflow-y-auto">
+                <div className="font-bold flex items-center gap-1.5 mb-1">
+                  <AlertTriangle className="h-4 w-4 text-amber-600 flex-shrink-0" />
+                  Pemberitahuan Baris:
+                </div>
+                <ul className="list-disc list-inside space-y-0.5 text-[11px]">
+                  {importStatus.warnings.slice(0, 5).map((w, i) => (
+                    <li key={i}>{w}</li>
+                  ))}
+                  {importStatus.warnings.length > 5 && (
+                    <li className="font-semibold italic">...dan {importStatus.warnings.length - 5} lainnya</li>
+                  )}
+                </ul>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
               <button
                 type="button"
                 onClick={() => setIsImportModalOpen(false)}
                 className="rounded-xl px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 transition"
               >
-                Batal
+                Tutup
               </button>
               <button
                 type="button"
-                onClick={handleSimulateDapodikImport}
-                className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 transition"
+                disabled={!importFile || importStatus.isLoading}
+                onClick={handleProcessImport}
+                className={`rounded-xl px-5 py-2 text-xs font-semibold text-white shadow-sm transition flex items-center gap-1.5 ${
+                  !importFile || importStatus.isLoading
+                    ? "bg-slate-300 cursor-not-allowed"
+                    : "bg-blue-600 hover:bg-blue-700"
+                }`}
               >
-                Impor Sekarang
+                {importStatus.isLoading ? (
+                  <>Memproses File...</>
+                ) : (
+                  <>
+                    <FileUp className="h-3.5 w-3.5" /> Proses Impor Sekarang
+                  </>
+                )}
               </button>
             </div>
           </div>

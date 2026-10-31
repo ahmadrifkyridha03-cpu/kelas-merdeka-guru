@@ -290,7 +290,7 @@ describe("Tier 1 - Feature Coverage: Core Features in Isolation", () => {
       expect(res.success).toBe(false);
       expect(res.isFallback).toBe(true);
       expect(res.fallbackData).toHaveLength(1);
-      expect(res.fallbackData[0].code).toBe("TP-01");
+      expect(res.fallbackData?.[0].code).toBe("TP-01");
     });
   });
 });
