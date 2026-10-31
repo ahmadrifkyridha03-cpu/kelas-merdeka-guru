@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { 
   CalendarCheck2, 
   CheckCircle2, 
@@ -9,48 +9,65 @@ import {
   Users, 
   Calendar,
   AlertCircle,
-  School
+  School,
+  CheckCheck
 } from "lucide-react";
-import { ClassSection, Student, AttendanceStatus } from "@/types";
-import { getSavedClasses, getSavedStudents } from "@/lib/store";
+import { useAppStore } from "@/lib/store";
+import type { AttendanceStatus, AttendanceRecord } from "@/types";
 
 export default function AttendancePage() {
-  const [classes, setClasses] = useState<ClassSection[]>([]);
-  const [selectedClassId, setSelectedClassId] = useState<string>("");
-  const [students, setStudents] = useState<Student[]>([]);
-  const [meetingNumber, setMeetingNumber] = useState(1);
-  const [date, setDate] = useState("2026-08-04");
-  const [topic, setTopic] = useState("Pengenalan Strategi Algoritma & Bubble Sort");
-  const [journal, setJournal] = useState("Siswa sangat antusias saat simulasi menggunakan kartu angka.");
-  const [attendance, setAttendance] = useState<Record<string, AttendanceStatus>>({});
+  const {
+    classes,
+    selectedClassId,
+    setSelectedClassId,
+    students,
+    attendance,
+    saveAttendance
+  } = useAppStore();
+
+  const [meetingNumber, setMeetingNumber] = useState<number>(1);
+  const [date, setDate] = useState<string>("2026-08-04");
+  const [topic, setTopic] = useState<string>("Pengenalan Strategi Algoritma & Bubble Sort");
+  const [journal, setJournal] = useState<string>("Siswa sangat antusias saat simulasi menggunakan kartu angka.");
+  const [attendanceState, setAttendanceState] = useState<Record<string, AttendanceStatus>>({});
   const [savedNotification, setSavedNotification] = useState(false);
   const [isClient, setIsClient] = useState(false);
 
   useEffect(() => {
     setIsClient(true);
-    const loadedClasses = getSavedClasses();
-    const loadedStudents = getSavedStudents();
-    setClasses(loadedClasses);
-    setStudents(loadedStudents);
-    if (loadedClasses.length > 0) {
-      setSelectedClassId(loadedClasses[0].id);
+    if (!selectedClassId && classes.length > 0) {
+      setSelectedClassId(classes[0].id);
     }
-  }, []);
+  }, [classes, selectedClassId, setSelectedClassId]);
 
   const activeClass = classes.find(c => c.id === selectedClassId) || classes[0];
-  const classStudents = students.filter(s => s.classId === selectedClassId);
+  const classStudents = useMemo(() => {
+    return students.filter(s => s.classId === selectedClassId);
+  }, [students, selectedClassId]);
 
-  // Initialize attendance for class students
+  // Synchronize attendance state when date or selectedClassId changes
   useEffect(() => {
+    if (!classStudents || classStudents.length === 0) return;
+
+    const savedRecords = attendance[date];
     const initial: Record<string, AttendanceStatus> = {};
-    classStudents.forEach(s => {
-      initial[s.id] = "HADIR";
-    });
-    setAttendance(initial);
-  }, [selectedClassId, students]);
+
+    if (savedRecords && Array.isArray(savedRecords) && savedRecords.length > 0) {
+      classStudents.forEach(s => {
+        const rec = savedRecords.find(r => r.studentId === s.id);
+        initial[s.id] = rec ? rec.status : "HADIR";
+      });
+    } else {
+      classStudents.forEach(s => {
+        initial[s.id] = "HADIR";
+      });
+    }
+
+    setAttendanceState(initial);
+  }, [date, selectedClassId, classStudents, attendance]);
 
   const handleStatusChange = (studentId: string, status: AttendanceStatus) => {
-    setAttendance(prev => ({ ...prev, [studentId]: status }));
+    setAttendanceState(prev => ({ ...prev, [studentId]: status }));
   };
 
   const handleMarkAllPresent = () => {
@@ -58,16 +75,46 @@ export default function AttendancePage() {
     classStudents.forEach(s => {
       updated[s.id] = "HADIR";
     });
-    setAttendance(updated);
+    setAttendanceState(updated);
   };
 
   const handleSave = () => {
+    if (!classStudents || classStudents.length === 0) return;
+
+    const records: AttendanceRecord[] = classStudents.map(s => ({
+      studentId: s.id,
+      status: attendanceState[s.id] || "HADIR",
+      timestamp: new Date().toISOString(),
+    }));
+
+    // Save to canonical Zustand store
+    saveAttendance(date, records);
+
     setSavedNotification(true);
-    setTimeout(() => setSavedNotification(false), 3000);
+    setTimeout(() => setSavedNotification(false), 3500);
   };
 
+  // Live attendance counts
+  const liveCounts = useMemo(() => {
+    const counts: Record<AttendanceStatus, number> = {
+      HADIR: 0,
+      SAKIT: 0,
+      IZIN: 0,
+      ALPA: 0,
+      TERLAMBAT: 0,
+      DISPENSASI: 0,
+    };
+
+    classStudents.forEach(s => {
+      const st = attendanceState[s.id] || "HADIR";
+      counts[st] = (counts[st] || 0) + 1;
+    });
+
+    return counts;
+  }, [classStudents, attendanceState]);
+
   if (!isClient || !activeClass) {
-    return <div className="p-8 text-center text-slate-400">Memuat presensi...</div>;
+    return <div className="p-8 text-center text-slate-400">Memuat presensi siswa...</div>;
   }
 
   const statusOptions: { label: string; code: AttendanceStatus; color: string }[] = [
@@ -91,7 +138,7 @@ export default function AttendancePage() {
             Presensi Siswa & Jurnal Pembelajaran
           </h1>
           <p className="text-sm text-slate-500">
-            Mencatat 6 status kehadiran per pertemuan yang langsung terhubung ke rekap jurnal guru.
+            Pencatatan 6 status kehadiran per pertemuan yang tersinkronisasi otomatis dengan buku besar dan pembekuan bonus.
           </p>
         </div>
 
@@ -99,8 +146,9 @@ export default function AttendancePage() {
           <button
             type="button"
             onClick={handleMarkAllPresent}
-            className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm transition"
           >
+            <CheckCheck className="h-4 w-4 text-emerald-600" />
             Tandai Semua Hadir
           </button>
           <button
@@ -114,9 +162,9 @@ export default function AttendancePage() {
       </div>
 
       {savedNotification && (
-        <div className="flex items-center gap-3 rounded-xl bg-emerald-50 border border-emerald-200 p-4 text-xs font-medium text-emerald-800">
+        <div className="flex items-center gap-3 rounded-xl bg-emerald-50 border border-emerald-200 p-4 text-xs font-medium text-emerald-800 animate-fadeIn">
           <CheckCircle2 className="h-4 w-4 text-emerald-600 flex-shrink-0" />
-          <span>Presensi dan jurnal mengajar berhasil disimpan ke database lokal dan cloud!</span>
+          <span>Presensi dan jurnal mengajar berhasil disimpan ke basis data terpusat!</span>
         </div>
       )}
 
@@ -127,7 +175,7 @@ export default function AttendancePage() {
           <select 
             value={selectedClassId}
             onChange={(e) => setSelectedClassId(e.target.value)}
-            className="w-full text-xs font-bold text-blue-700 p-2.5 rounded-lg border border-slate-200 bg-blue-50/50"
+            className="w-full text-xs font-bold text-blue-700 p-2.5 rounded-lg border border-slate-200 bg-blue-50/50 focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             {classes.map(c => (
               <option key={c.id} value={c.id}>{c.name} • {c.subjectName}</option>
@@ -140,9 +188,9 @@ export default function AttendancePage() {
           <select 
             value={meetingNumber}
             onChange={(e) => setMeetingNumber(Number(e.target.value))}
-            className="w-full text-xs font-semibold p-2.5 rounded-lg border border-slate-200 bg-slate-50"
+            className="w-full text-xs font-semibold p-2.5 rounded-lg border border-slate-200 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
-            {[1, 2, 3, 4, 5, 6, 7, 8].map(n => (
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18].map(n => (
               <option key={n} value={n}>Pertemuan {n} ({activeClass.teachingHoursPerWeek || 3} JP)</option>
             ))}
           </select>
@@ -154,7 +202,7 @@ export default function AttendancePage() {
             type="date"
             value={date}
             onChange={(e) => setDate(e.target.value)}
-            className="w-full text-xs font-semibold p-2.5 rounded-lg border border-slate-200 bg-slate-50"
+            className="w-full text-xs font-semibold p-2.5 rounded-lg border border-slate-200 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
 
@@ -164,8 +212,36 @@ export default function AttendancePage() {
             type="text"
             value={topic}
             onChange={(e) => setTopic(e.target.value)}
-            className="w-full text-xs font-semibold p-2.5 rounded-lg border border-slate-200 bg-slate-50"
+            className="w-full text-xs font-semibold p-2.5 rounded-lg border border-slate-200 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
+        </div>
+      </div>
+
+      {/* Live Attendance Badges */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-3 text-center">
+          <div className="text-[10px] font-bold uppercase text-emerald-700">Hadir (H)</div>
+          <div className="text-xl font-extrabold text-emerald-800">{liveCounts.HADIR}</div>
+        </div>
+        <div className="rounded-xl border border-blue-200 bg-blue-50/50 p-3 text-center">
+          <div className="text-[10px] font-bold uppercase text-blue-700">Sakit (S)</div>
+          <div className="text-xl font-extrabold text-blue-800">{liveCounts.SAKIT}</div>
+        </div>
+        <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-3 text-center">
+          <div className="text-[10px] font-bold uppercase text-amber-700">Izin (I)</div>
+          <div className="text-xl font-extrabold text-amber-800">{liveCounts.IZIN}</div>
+        </div>
+        <div className="rounded-xl border border-rose-200 bg-rose-50/50 p-3 text-center">
+          <div className="text-[10px] font-bold uppercase text-rose-700">Alpa (A)</div>
+          <div className="text-xl font-extrabold text-rose-800">{liveCounts.ALPA}</div>
+        </div>
+        <div className="rounded-xl border border-purple-200 bg-purple-50/50 p-3 text-center">
+          <div className="text-[10px] font-bold uppercase text-purple-700">Terlambat (T)</div>
+          <div className="text-xl font-extrabold text-purple-800">{liveCounts.TERLAMBAT}</div>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-slate-100/60 p-3 text-center">
+          <div className="text-[10px] font-bold uppercase text-slate-700">Dispensasi (D)</div>
+          <div className="text-xl font-extrabold text-slate-800">{liveCounts.DISPENSASI}</div>
         </div>
       </div>
 
@@ -176,7 +252,7 @@ export default function AttendancePage() {
             <tr>
               <th className="py-3 px-4 w-12 text-center">No</th>
               <th className="py-3 px-4">Nama Lengkap Siswa</th>
-              <th className="py-3 px-4 text-center w-24">NISN</th>
+              <th className="py-3 px-4 text-center w-28">NISN</th>
               <th className="py-3 px-4 text-center">Pilihan Status Presensi</th>
             </tr>
           </thead>
@@ -189,13 +265,13 @@ export default function AttendancePage() {
               </tr>
             ) : (
               classStudents.map((student, idx) => {
-                const currentStatus = attendance[student.id] || "HADIR";
+                const currentStatus = attendanceState[student.id] || "HADIR";
 
                 return (
                   <tr key={student.id} className="hover:bg-slate-50 transition">
                     <td className="py-3 px-4 text-center font-medium text-slate-400">{idx + 1}</td>
                     <td className="py-3 px-4 font-bold text-slate-900">{student.fullName}</td>
-                    <td className="py-3 px-4 text-center font-mono text-[11px] text-slate-500">{student.nisn}</td>
+                    <td className="py-3 px-4 text-center font-mono text-[11px] text-slate-500">{student.nisn || "-"}</td>
                     <td className="py-3 px-4">
                       <div className="flex items-center justify-center gap-1.5 flex-wrap">
                         {statusOptions.map(opt => {
@@ -241,4 +317,3 @@ export default function AttendancePage() {
     </div>
   );
 }
-
